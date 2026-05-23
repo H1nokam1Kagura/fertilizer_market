@@ -90,6 +90,36 @@ def test_use_state_consumption_optional(use: pd.DataFrame) -> None:
         )
 
 
+def test_use_state_consumption_pagination_canary(use: pd.DataFrame) -> None:
+    """data.gov.in guest key caps each call at 10 records; the puller must
+    paginate via offset. With 37 states × 4 products × 5 years and a per-row
+    product-skip for NPKS, we expect >=300 rows. If this fails, the offset
+    loop in scripts/refresh.py::_fetch_datagovin regressed (or the guest API
+    key is rate-limited — distinguishable via refresh log).
+    """
+    state_rows = use[use["source"] == "india_dof_state_consumption"]
+    if state_rows.empty:
+        pytest.skip("india_dof_state_consumption empty — likely rate-limited on this run")
+    assert len(state_rows) >= 300, (
+        f"only {len(state_rows)} state-consumption rows — pagination likely broken "
+        f"(guest-key 10-row cap regression?)"
+    )
+
+
+def test_use_district_npk_canary(use: pd.DataFrame) -> None:
+    """30 districts × 3 nutrients (N/P2O5/K2O) = 90 rows exactly. Any drift
+    means the column-resolution logic in scripts/refresh.py changed or the
+    upstream resource shape moved.
+    """
+    district_rows = use[use["source"] == "india_dof_district_npk"]
+    if district_rows.empty:
+        pytest.skip("india_dof_district_npk empty — likely rate-limited on this run")
+    assert len(district_rows) == 90, (
+        f"expected exactly 90 district-NPK rows (30 districts × 3 nutrients), "
+        f"got {len(district_rows)}"
+    )
+
+
 def test_use_tier1_countries_present(use: pd.DataFrame) -> None:
     have = set(use["country_iso3"].dropna().unique())
     need = {"IND", "NGA", "ETH", "TZA", "KEN"}

@@ -430,6 +430,24 @@ def empty_frame(cols: list[str]) -> pd.DataFrame:
     return pd.DataFrame({c: pd.Series(dtype="object") for c in cols})
 
 
+def append_rows(base: pd.DataFrame, new_rows: list[dict] | pd.DataFrame,
+                cols: list[str]) -> pd.DataFrame:
+    """Append rows to `base` without triggering pandas' empty-frame concat
+    FutureWarning. Accepts a list-of-dicts or a pre-built DataFrame.
+    """
+    if isinstance(new_rows, pd.DataFrame):
+        new_df = new_rows
+    else:
+        if not new_rows:
+            return base
+        new_df = pd.DataFrame(new_rows, columns=cols)
+    if new_df.empty:
+        return base
+    if base.empty:
+        return new_df[cols]
+    return pd.concat([base, new_df], ignore_index=True)
+
+
 def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     import pycountry
 
@@ -494,8 +512,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                         "source_url": src_url, "retrieved_at": retrieved_at,
                         "review_flags": "",
                     })
-            if ps_rows:
-                prices = pd.concat([prices, pd.DataFrame(ps_rows, columns=PRICE_COLS)], ignore_index=True)
+            prices = append_rows(prices, ps_rows, PRICE_COLS)
             log.info("wb_pinksheet rows: %d", len(ps_rows))
         except Exception as exc:  # noqa: BLE001
             log.warning("wb_pinksheet parse failed: %s", exc)
@@ -561,8 +578,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                         })
                 except Exception as exc:  # noqa: BLE001
                     log.warning("afe %s parse failed: %s", iso, exc)
-        if afe_rows:
-            prices = pd.concat([prices, pd.DataFrame(afe_rows, columns=PRICE_COLS)], ignore_index=True)
+        prices = append_rows(prices, afe_rows, PRICE_COLS)
         log.info("africafertilizer rows: %d", len(afe_rows))
 
     # ── FAOSTAT RFN (Fertilizers by Nutrient, Normalized) ──────────────────
@@ -630,8 +646,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                 }
                 row[rec.field] = rec.val_f
                 new_rows.append(row)
-            if new_rows:
-                use = pd.concat([use, pd.DataFrame(new_rows, columns=USE_COLS)], ignore_index=True)
+            use = append_rows(use, new_rows, USE_COLS)
             log.info("faostat rows: %d", len(new_rows))
         except Exception as exc:  # noqa: BLE001
             log.warning("faostat parse failed: %s", exc)
@@ -727,7 +742,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                 rollup["source_url"] = src_url
                 rollup["retrieved_at"] = retrieved_at
                 rollup = rollup[USE_COLS]
-                use = pd.concat([use, rollup], ignore_index=True)
+                use = append_rows(use, rollup, USE_COLS)
                 log.info("faostat_product rows: %d (from %d product-nutrient pairs)", len(rollup), len(prod_rows))
             else:
                 log.info("faostat_product rows: 0")
@@ -758,8 +773,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                         "arable_land_ha": None,
                         "source_url": src_url, "retrieved_at": retrieved_at, "review_flags": "",
                     })
-            if owid_rows:
-                use = pd.concat([use, pd.DataFrame(owid_rows, columns=USE_COLS)], ignore_index=True)
+            use = append_rows(use, owid_rows, USE_COLS)
             log.info("owid rows: %d", len(owid_rows))
         except Exception as exc:  # noqa: BLE001
             log.warning("owid parse failed: %s", exc)
@@ -793,8 +807,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                     "arable_land_ha": None,
                     "source_url": src_url, "retrieved_at": retrieved_at, "review_flags": "",
                 })
-            if wdi_rows:
-                use = pd.concat([use, pd.DataFrame(wdi_rows, columns=USE_COLS)], ignore_index=True)
+            use = append_rows(use, wdi_rows, USE_COLS)
             log.info("wb_wdi rows: %d", len(wdi_rows))
         except Exception as exc:  # noqa: BLE001
             log.warning("wb_wdi parse failed: %s", exc)
@@ -866,8 +879,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                             "source_url": src_subsidy, "retrieved_at": retrieved_at,
                             "review_flags": "annual_subsidy_total_not_per_ton",
                         })
-                if sub_rows:
-                    prices = pd.concat([prices, pd.DataFrame(sub_rows, columns=PRICE_COLS)], ignore_index=True)
+                prices = append_rows(prices, sub_rows, PRICE_COLS)
                 log.info("india_dof_subsidy rows: %d", len(sub_rows))
         except Exception as exc:  # noqa: BLE001
             log.warning("india_dof subsidy parse failed: %s", exc)
@@ -936,7 +948,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                     rollup["source_url"] = src_cons
                     rollup["retrieved_at"] = retrieved_at
                     rollup = rollup[USE_COLS]
-                    use = pd.concat([use, rollup], ignore_index=True)
+                    use = append_rows(use, rollup, USE_COLS)
                     log.info("india_dof_consumption rows: %d (from %d product-nutrient pairs)",
                              len(rollup), len(cons_rows))
                 else:
@@ -1023,7 +1035,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                 rollup["source_url"] = src_url
                 rollup["retrieved_at"] = retrieved_at
                 rollup = rollup[USE_COLS]
-                use = pd.concat([use, rollup], ignore_index=True)
+                use = append_rows(use, rollup, USE_COLS)
                 log.info("india_dof_state_consumption rows: %d (from %d product-nutrient pairs)",
                          len(rollup), len(consumption_rows))
             else:
@@ -1075,8 +1087,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                             "source_url": src_url, "retrieved_at": retrieved_at,
                             "review_flags": "district_level;year_2019_20_only",
                         })
-            if district_rows:
-                use = pd.concat([use, pd.DataFrame(district_rows, columns=USE_COLS)], ignore_index=True)
+            use = append_rows(use, district_rows, USE_COLS)
             log.info("india_dof_district_npk rows: %d", len(district_rows))
         except Exception as exc:  # noqa: BLE001
             log.warning("india_dof_district_npk parse failed: %s", exc)
@@ -1095,11 +1106,18 @@ def preserve_failed_sources(df: pd.DataFrame, prev_path: Path, src_status: dict[
     failed = [k for k, v in src_status.items() if v != "ok"]
     if not failed:
         return df
-    keep = prev[prev["source"].isin(failed)]
+    keep = prev[prev["source"].isin(failed)].copy()
     if keep.empty:
         return df
+    # Backfill columns the prior parquet predates (e.g. state_or_region on first
+    # migration). New columns get None → NaN, which is the right default for
+    # historical national-level rows.
+    for c in cols:
+        if c not in keep.columns:
+            keep[c] = None
+    keep = keep[cols]
     log.info("preserved %d rows for failed sources %s from %s", len(keep), failed, prev_path)
-    return pd.concat([df, keep], ignore_index=True)[cols]
+    return append_rows(df, keep, cols)
 
 
 # ── MAIN ────────────────────────────────────────────────────────────────────

@@ -165,8 +165,8 @@ FROM read_files('$stagingVolume/prices.parquet', format => 'parquet')
 "@
     $sqlUse = @"
 INSERT OVERWRITE $catalog.$schema.fertilizer_use
-SELECT source, source_record_id, country_iso3, country_name, CAST(year AS INT) AS year,
-       nutrient, total_tonnes, kg_per_ha_arable, arable_land_ha,
+SELECT source, source_record_id, country_iso3, country_name, state_or_region,
+       CAST(year AS INT) AS year, nutrient, total_tonnes, kg_per_ha_arable, arable_land_ha,
        source_url, retrieved_at, review_flags
 FROM read_files('$stagingVolume/use.parquet', format => 'parquet')
 "@

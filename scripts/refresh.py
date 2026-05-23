@@ -448,7 +448,8 @@ def append_rows(base: pd.DataFrame, new_rows: list[dict] | pd.DataFrame,
     return pd.concat([base, new_df], ignore_index=True)
 
 
-def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+def normalize(staging: Path, results: dict[str, str], retrieved_at: str,
+              canonical_dir: Path | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     import pycountry
 
     prices = empty_frame(PRICE_COLS)
@@ -1092,6 +1093,37 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
         except Exception as exc:  # noqa: BLE001
             log.warning("india_dof_district_npk parse failed: %s", exc)
 
+    # ── Manual-import seed CSVs (data/canonical/manual_import_*_consumption.csv) ─
+    # Country-specific data for ETH/GHA/KEN/NGA/SEN/TZA where no machine-readable
+    # API exists. Analyst extracts annually from source PDFs into canonical-shaped
+    # CSVs in the repo. See data/canonical/AFRICA_DATA_SOURCES.md for the audit.
+    # Each CSV must match the canonical USE_COLS schema exactly. Header-only
+    # CSVs (no data rows) are valid — they just contribute zero rows.
+    if canonical_dir and canonical_dir.exists():
+        for csv_path in sorted(canonical_dir.glob("manual_import_*_consumption.csv")):
+            try:
+                df = pd.read_csv(csv_path, comment="#")
+                # Drop any rows that are header-shaped (column names repeated in data)
+                df = df[df["source"].notna() & (df["source"] != "source")]
+                if df.empty:
+                    log.info("manual_import %s: header-only (0 rows)", csv_path.name)
+                    continue
+                missing = [c for c in USE_COLS if c not in df.columns]
+                if missing:
+                    log.warning("manual_import %s: missing columns %s — skipping",
+                                csv_path.name, missing)
+                    continue
+                # Cast numeric columns; CSV reads everything as string by default.
+                for col in ("total_tonnes", "kg_per_ha_arable", "arable_land_ha"):
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+                df["year"] = pd.to_numeric(df["year"], errors="coerce").astype("Int64")
+                df = df.dropna(subset=["year"])
+                df = df[USE_COLS]
+                use = append_rows(use, df, USE_COLS)
+                log.info("manual_import %s: %d rows", csv_path.name, len(df))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("manual_import %s parse failed: %s", csv_path.name, exc)
+
     return prices, use
 
 
@@ -1188,8 +1220,13 @@ def main() -> int:
     _try("india_dof_state_consumption", lambda: get_datagovin_state_consumption(india_dir / "state_consumption.csv"))
     _try("india_dof_district_npk",      lambda: get_datagovin_district_npk(india_dir / "district_npk.csv"))
 
+    # Manual-import seeds live in the repo (data/canonical/), not in the per-run
+    # out_dir. Resolve from the script location so --out-dir overrides still pick
+    # up the canonical seeds correctly.
+    canonical_dir = Path(__file__).resolve().parent.parent / "data" / "canonical"
+
     try:
-        prices, use = normalize(staging, results, retrieved_at)
+        prices, use = normalize(staging, results, retrieved_at, canonical_dir=canonical_dir)
 
         price_results = {k: results.get(k) for k in ("wb_pinksheet", "africafertilizer", "india_dof")}
         use_results = {k: results.get(k) for k in (

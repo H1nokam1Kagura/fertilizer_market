@@ -1,0 +1,44 @@
+source,source_record_id,country_iso3,country_name,state_or_region,year,nutrient,total_tonnes,kg_per_ha_arable,arable_land_ha,source_url,retrieved_at,review_flags
+# Manual-import seed for Tanzania fertilizer consumption (region × year × nutrient).
+#
+# WHY THIS FILE EXISTS:
+#   Tanzania NBS publishes the Annual Agricultural Sample Survey (AASS) and the
+#   National Sample Census of Agriculture (NSCA) — both as PDFs only. Tanzania
+#   IS covered by VIFAA retail prices in our existing pull (source =
+#   africafertilizer in fertilizer_price), but consumption volume by region is
+#   not. See ../canonical/AFRICA_DATA_SOURCES.md for the full audit.
+#
+# HOW TO POPULATE:
+#   1. Pull the latest AASS Key Findings Report. Recent:
+#      - 2023/24 (PDF, Oct 2025):
+#        https://www.nbs.go.tz/uploads/statistics/documents/en-1760643333-KEY%20FINDINGS%20REPORT_AASS%202023-24_ENGLISH.pdf
+#      - 2022/23 (PDF, Dec 2024):
+#        https://www.nbs.go.tz/uploads/statistics/documents/en-1734966261-AASS%202022-23%20KEY%20FINDINGS%20REPORT-ENGLISH.pdf
+#      Index of AASS reports: https://www.nbs.go.tz/statistics/topic/annual-agriculture-sample-surveys
+#   2. Locate the "Area Applied with Fertilizer" or "Fertilizer Use" table.
+#      AASS reports break out by region (~26 regions in Mainland + Zanzibar).
+#      Coverage: total area planted vs area applied with fertilizer; type of
+#      fertilizer (Urea/DAP/CAN/NPK); sometimes nutrient tonnes.
+#   3. For nutrient TONNES (preferred): emit one row per (region, nutrient, year).
+#   4. For COVERAGE % only (no tonnes): land as `nutrient='total'` with
+#      `kg_per_ha_arable` populated using the report's area-applied-with-fert
+#      metric × inferred application rate. Flag in review_flags as
+#      'coverage_only_no_tonnes'.
+#   5. Commit with the source PDF URL in the commit message.
+#
+# SCHEMA (canonical fertilizer_use):
+#   source            = 'manual_import_tza_aass'
+#   source_record_id  = composite, format: manual_import_tza_aass|TZA|<region>|<nutrient>|<year>
+#   country_iso3      = 'TZA'
+#   country_name      = 'Tanzania'
+#   state_or_region   = region name (e.g. 'Arusha', 'Mbeya', 'Zanzibar'), or NULL for Mainland total
+#   year              = start year of agricultural-year (e.g. '2023' for 2023/24)
+#   nutrient          = 'N' | 'P2O5' | 'K2O' | 'total'
+#   total_tonnes      = consumption in metric tonnes; NULL if AASS reports only coverage %
+#   kg_per_ha_arable  = consumption in kg/ha arable; NULL if only tonnes
+#   arable_land_ha    = denominator used if kg_per_ha_arable populated
+#   source_url        = direct URL to the AASS Key Findings PDF
+#   retrieved_at      = ISO-8601 UTC timestamp of extraction
+#   review_flags      = always 'manual_import'; add 'AASS_2023_24', 'mainland_only', 'coverage_only_no_tonnes' etc.
+#
+# CURRENT STATE: header-only. Awaiting first analyst extraction.

@@ -1,0 +1,40 @@
+source,source_record_id,country_iso3,country_name,state_or_region,year,nutrient,total_tonnes,kg_per_ha_arable,arable_land_ha,source_url,retrieved_at,review_flags
+# Manual-import seed for Senegal fertilizer consumption + subsidy allocation.
+#
+# WHY THIS FILE EXISTS:
+#   Senegal's DAPSA (Direction de l'Analyse, de la Prévision et des Statistiques
+#   Agricoles) publishes the Enquête Agricole Annuelle (EAA) and operates the
+#   e-Subvention program. All public artifacts are PDFs at
+#   https://www.dapsa.gouv.sn/sites/default/files/publications/*.pdf —
+#   no XLSX/CSV export. Senegal is NOT covered by VIFAA retail prices today
+#   (sparse entries; SEN is in the priority pull list but data is thin).
+#   See ../canonical/AFRICA_DATA_SOURCES.md for the full audit.
+#
+# HOW TO POPULATE:
+#   1. Pull the latest EAA report from https://www.dapsa.gouv.sn/toutes-les-publications
+#      (typically annual; covers the previous agricultural campaign).
+#   2. The fertilizer section reports either national tonnes by N/P2O5/K2O or
+#      subsidy tonnages by crop (peanut/arachide, rice/riz, maize/maïs, etc.).
+#   3. For CONSUMPTION rows: emit one row per (nutrient, year) at the national
+#      level (state_or_region = NULL).
+#   4. For SUBSIDY-ALLOCATION rows: these belong in fertilizer_price, not
+#      fertilizer_use. Add to a separate manual_import_sen_subsidy.csv when
+#      that becomes a priority.
+#   5. Commit with the source PDF URL in the commit message.
+#
+# SCHEMA (canonical fertilizer_use):
+#   source            = 'manual_import_sen_consumption'
+#   source_record_id  = composite, format: manual_import_sen_consumption|SEN|<region_or_NULL>|<nutrient>|<year>
+#   country_iso3      = 'SEN'
+#   country_name      = 'Senegal'
+#   state_or_region   = region name (e.g. 'Dakar', 'Saint-Louis'), or NULL for national totals
+#   year              = calendar year of effect (use start year of agricultural-year ranges)
+#   nutrient          = 'N' | 'P2O5' | 'K2O' | 'total'
+#   total_tonnes      = consumption in metric tonnes
+#   kg_per_ha_arable  = optional; NULL if only tonnes reported
+#   arable_land_ha    = optional
+#   source_url        = direct URL to the EAA PDF
+#   retrieved_at      = ISO-8601 UTC timestamp of extraction
+#   review_flags      = always 'manual_import'; add caveats like 'EAA_2022_23' or 'national_only'
+#
+# CURRENT STATE: header-only. Awaiting first analyst extraction.

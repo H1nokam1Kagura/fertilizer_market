@@ -1,0 +1,39 @@
+source,source_record_id,country_iso3,country_name,state_or_region,year,nutrient,total_tonnes,kg_per_ha_arable,arable_land_ha,source_url,retrieved_at,review_flags
+# Manual-import seed for Nigeria fertilizer consumption (state × year × nutrient).
+#
+# WHY THIS FILE EXISTS:
+#   Nigeria publishes fertilizer-consumption statistics via NBS publications and
+#   the AfricaFertilizer/IFDC Fertilizer Statistics Overview series, but neither
+#   exposes machine-readable APIs. See ../canonical/AFRICA_DATA_SOURCES.md for
+#   the full landscape audit.
+#
+# HOW TO POPULATE:
+#   1. Locate the latest Nigeria fertilizer-consumption table. Candidates:
+#      - NBS publication "Nigerian Fertilizer Consumption" (state-level, 1994-2015
+#        per agent's catalog research; direct URL not yet located on
+#        nigerianstat.gov.ng — check eLibrary).
+#      - IFDC "Fertilizer Statistics Overview: Nigeria 2018-2022" PDF
+#        (api.hub.ifdc.org/server/api/core/bitstreams/<uuid>).
+#      - AfricaFertilizer.org country dashboard CSV exports if exposed
+#        (the seriesByProducts endpoint we already pull is retail PRICE only,
+#        not consumption volume).
+#   2. Extract rows of the form state × year × nutrient × tonnes.
+#   3. Map to schema below; emit one row per (state, year, nutrient).
+#   4. Commit with the source PDF URL in the commit message.
+#
+# SCHEMA (canonical fertilizer_use):
+#   source            = 'manual_import_nga_consumption'
+#   source_record_id  = composite, format: manual_import_nga_consumption|NGA|<state>|<nutrient>|<year>
+#   country_iso3      = 'NGA'
+#   country_name      = 'Nigeria'
+#   state_or_region   = state name (e.g. 'Kano', 'Lagos'), or NULL for national totals
+#   year              = calendar year of effect (use start year of agricultural-year ranges)
+#   nutrient          = 'N' | 'P2O5' | 'K2O' | 'total'
+#   total_tonnes      = consumption in metric tonnes; NULL if only kg/ha reported
+#   kg_per_ha_arable  = consumption in kg/ha arable; NULL if only tonnes reported
+#   arable_land_ha    = denominator used if kg_per_ha_arable populated
+#   source_url        = direct URL to the source PDF/XLSX
+#   retrieved_at      = ISO-8601 UTC timestamp of extraction
+#   review_flags      = always include 'manual_import'; add caveats like 'NBS_1994_2015_series' or 'IFDC_FSO_2018_22'
+#
+# CURRENT STATE: header-only. Awaiting first analyst extraction.

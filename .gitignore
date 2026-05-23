@@ -5,3 +5,4 @@ __pycache__/
 .idea/
 *.tmp
 data/refresh_log.csv
+data/india_pib_nbs/

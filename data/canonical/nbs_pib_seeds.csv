@@ -1,0 +1,23 @@
+prid,announced_date,season,fiscal_year,notes
+# India PIB press release IDs for Nutrient-Based Subsidy (NBS) rate-change events.
+# The Cabinet Committee on Economic Affairs (CCEA) approves NBS rates twice yearly:
+#   kharif (effective 1 April → 30 Sept)
+#   rabi   (effective 1 Oct  → 31 March)
+# Each approval is announced via a PIB press release with a unique PRID. URL pattern:
+#   https://pib.gov.in/PressReleseDetailm.aspx?PRID=<PRID>
+#
+# Populate this file by:
+#   1. Searching https://pib.gov.in/Allreleasem.aspx for "Nutrient Based Subsidy" +
+#      "Cabinet" and noting PRIDs from result links.
+#   2. Or cross-referencing Department of Fertilizers annual reports (which cite PRIDs).
+#
+# Columns:
+#   prid           — numeric PIB press release ID
+#   announced_date — YYYY-MM-DD of the press release
+#   season         — kharif | rabi
+#   fiscal_year    — e.g. 2024-25 (Indian fiscal year of effect)
+#   notes          — free text (e.g. "DAP special package included")
+#
+# Example seed rows (UNVERIFIED — replace with real PRIDs before first run):
+# 1925394,2023-05-17,kharif,2023-24,
+# 1968471,2023-10-04,rabi,2023-24,

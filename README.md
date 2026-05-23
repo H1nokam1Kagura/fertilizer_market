@@ -57,36 +57,42 @@ MCP queries, ad-hoc analysis) reads from these.
 
 ## Quick start
 
-```powershell
-# One-time setup (run once per machine):
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-Unblock-File -Path .\scripts\Refresh-FertilizerMarket.ps1
-Unblock-File -Path .\databricks\Load-FertilizerMarket.ps1
-Unblock-File -Path .\databricks\Weekly-Refresh.ps1
+```bash
+# Install dependencies:
+pip install -r requirements.txt
 
-# Confirm Databricks CLI auth (uses your existing keychain — no PATs in scripts):
-databricks auth describe --profile DEFAULT
+# Refresh everything (default: writes to ./data):
+python scripts/refresh.py
 
-# First run — create Delta tables, no load yet:
-pwsh -File .\databricks\Load-FertilizerMarket.ps1 -CreateTables -SkipLoad
+# Skip one source for local iteration:
+python scripts/refresh.py --skip africafertilizer
 
-# Pull data, emit parquet, push to Databricks:
-pwsh -File .\scripts\Refresh-FertilizerMarket.ps1
-
-# Or pull data only (skip Databricks push) — useful for local dev:
-pwsh -File .\scripts\Refresh-FertilizerMarket.ps1 -SkipDatabricksPush
+# India PIB NBS scraper (separate, seed-driven):
+python scripts/refresh_nbs.py
 
 # Smoke test the artifacts:
-Invoke-Pester .\tests\Test-Smoke.ps1
+pwsh -Command "Invoke-Pester .\tests\Test-Smoke.ps1"   # Pester 5+ required
+```
+
+```powershell
+# Manual Databricks push (workstation only — CI does not push):
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+Unblock-File -Path .\databricks\Load-FertilizerMarket.ps1
+databricks auth describe --profile DEFAULT
+pwsh -File .\databricks\Load-FertilizerMarket.ps1                       # Azure
+pwsh -File .\databricks\Load-FertilizerMarket.ps1 -Fairgrounds -Profile fairgrounds-pat   # FG
 ```
 
 ## Refresh cadence
 
 | Path | When | What runs |
 |---|---|---|
-| **Primary** | Sunday 03:00 UTC | Databricks Job `fertilizer-weekly-refresh` runs `databricks/Weekly-Refresh.ps1`, which invokes `scripts/Refresh-FertilizerMarket.ps1` against the Git-folder-synced repo and writes to `ggo_agdev.bioinputs.fertilizer_*`. |
-| **Backup** | Saturday 22:00 UTC | GitHub Actions `weekly-refresh.yml` runs the same `scripts/Refresh-FertilizerMarket.ps1 -SkipDatabricksPush` on `windows-latest`, opens a PR with the refreshed `data/*.parquet`. |
-| **Manual fallback** | Any time | `pwsh -File .\databricks\Load-FertilizerMarket.ps1` reloads from local `data/` to Databricks. |
+| **Primary** | Saturday 22:00 UTC | GitHub Actions `weekly-refresh.yml` runs `python scripts/refresh.py` on `ubuntu-latest`, commits refreshed `data/*.parquet` directly to `main`. |
+| **Databricks load** | Triggered by the workflow if `DATABRICKS_HOST` + `vars.DATABRICKS_REFRESH_JOB_ID` are set | The workflow posts to `/api/2.1/jobs/run-now`. No Databricks Job is currently set up in this repo (the previous pwsh-on-ephemeral-cluster spec was removed 2026-05-22 because the workspace blocks cluster creation for the service user — needs a serverless-or-existing-cluster rewrite). Until then, Delta load is manual. |
+| **Manual fallback** | Any time | `pwsh -File .\databricks\Load-FertilizerMarket.ps1` reloads from local `data/` to Databricks via the SQL warehouse statement API. |
+
+The legacy PowerShell runners (`scripts/Refresh-FertilizerMarket.ps1`, `scripts/Refresh-IndiaNBS.ps1`)
+remain as ad-hoc workstation alternatives. CI uses the Python entrypoints.
 
 ## Databricks targets
 
@@ -159,12 +165,17 @@ directly.** This bug cost a day; the original "FAOSTAT has no P+K" diagnosis was
 
 ## Architecture notes
 
-- `Refresh-FertilizerMarket.ps1` is the only puller. Embedded Python (pandas + openpyxl + pyarrow)
-  handles XLSX, ZIP/CSV, JSON, and parquet serialization. PowerShell handles HTTP + orchestration +
-  Databricks CLI.
-- Every `databricks` CLI call is wrapped in a 3× retry and pins `--profile` explicitly.
-- Idempotent: re-running is safe. `INSERT OVERWRITE` replaces the Delta partition; previous-source
-  rows are preserved if a single source fails on a given run.
+- `scripts/refresh.py` is the canonical puller — pure Python, runs on Linux (CI) and Windows
+  (workstation). Uses `requests` for HTTP, `pandas + pyarrow` for parquet, `pycountry` for M49→ISO3,
+  `openpyxl` for the Pink Sheet XLSX. `scripts/refresh_nbs.py` is the standalone PIB NBS scraper
+  (seed-driven, separate cadence).
+- The legacy `scripts/Refresh-FertilizerMarket.ps1` and `scripts/Refresh-IndiaNBS.ps1` remain as
+  ad-hoc workstation runners (PS 7+, embedded Python). CI calls the Python entrypoints. The
+  PowerShell versions include a Databricks-push step the Python does not — workstation pushes
+  go through `databricks/Load-FertilizerMarket.ps1`.
+- All HTTP calls are wrapped in a 3× retry with 5s backoff.
+- Idempotent: re-running is safe. `INSERT OVERWRITE` replaces the Delta partition; the Python
+  refresh preserves prior-parquet rows for any source that failed in the current run.
 - Provenance: every row carries `source`, `source_url`, `retrieved_at`. QC issues go in
   `review_flags` (semicolon-separated), same convention as `ref_varieties`.
 - Type discipline: `year` and `month` are `int32` on disk; cast to `INT` on Databricks load to

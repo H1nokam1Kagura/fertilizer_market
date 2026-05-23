@@ -2,56 +2,51 @@ name: weekly-refresh
 
 on:
   schedule:
-    # Saturday 22:00 UTC — backup path before the Sunday 03:00 UTC Databricks Job
+    # Saturday 22:00 UTC — weekly canonical refresh
     - cron: '0 22 * * 6'
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: write       # to commit refreshed parquet back
 
 jobs:
   refresh:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
-      - name: Setup Python
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Install Python deps
-        shell: pwsh
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run PowerShell refresh (no Databricks push)
-        shell: pwsh
+      - name: Refresh live-API sources + rebuild parquet
+        run: python scripts/refresh.py --out-dir data
+
+      - name: Commit if changed
         run: |
-          ./scripts/Refresh-FertilizerMarket.ps1 -SkipDatabricksPush
+          git config user.name  "github-actions"
+          git config user.email "actions@github.com"
+          if ! git diff --quiet data/; then
+            git add data/prices.parquet data/prices.csv data/use.parquet data/use.csv data/refresh_log.csv
+            git commit -m "chore: weekly fertilizer refresh $(date -u +%Y-%m-%d)"
+            git push
+          else
+            echo "No changes to publish"
+          fi
 
-      - name: Detect changes
-        id: changes
-        shell: pwsh
+      - name: Notify Databricks (optional — triggers load job)
+        if: ${{ secrets.DATABRICKS_HOST != '' && vars.DATABRICKS_REFRESH_JOB_ID != '' }}
         run: |
-          git add data/
-          $changed = (git diff --cached --name-only | Measure-Object).Count -gt 0
-          "changed=$changed" >> $env:GITHUB_OUTPUT
-
-      - name: Create PR with refreshed data
-        if: steps.changes.outputs.changed == 'True'
-        uses: peter-evans/create-pull-request@v6
-        with:
-          branch: refresh-bot/${{ github.run_id }}
-          title: 'data: weekly fertilizer refresh'
-          body: |
-            Automated weekly refresh of `data/prices.parquet` and `data/use.parquet`.
-
-            Sources pulled: WB Pink Sheet, AfricaFertilizer, FAOSTAT, OWID, WB WDI.
-            Databricks push is **skipped** in this run — the Sunday 03:00 UTC Databricks Job
-            performs the canonical Delta load. This PR is the backup-path data commit only.
-          commit-message: 'data: weekly fertilizer refresh (${{ github.run_id }})'
+          curl -X POST \
+            -H "Authorization: Bearer ${{ secrets.DATABRICKS_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"job_id": ${{ vars.DATABRICKS_REFRESH_JOB_ID }}}' \
+            ${{ secrets.DATABRICKS_HOST }}/api/2.1/jobs/run-now

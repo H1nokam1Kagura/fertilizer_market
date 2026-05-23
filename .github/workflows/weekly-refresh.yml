@@ -38,8 +38,9 @@ jobs:
         run: |
           git config user.name  "github-actions"
           git config user.email "actions@github.com"
-          if ! git diff --quiet data/; then
-            git add data/prices.parquet data/prices.csv data/use.parquet data/use.csv data/refresh_log.csv
+          # refresh_log.csv is gitignored; explicit list keeps the commit scope deliberate.
+          git add data/prices.parquet data/prices.csv data/use.parquet data/use.csv
+          if ! git diff --cached --quiet; then
             git commit -m "chore: weekly fertilizer refresh $(date -u +%Y-%m-%d)"
             git push
           else

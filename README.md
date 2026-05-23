@@ -114,10 +114,48 @@ pwsh -File .\databricks\Load-FertilizerMarket.ps1 -Fairgrounds -Profile fairgrou
 
 | Source | v2 decision | Replacement / supplement |
 |---|---|---|
-| **India FAI Yearbook (PDF)** | **DROPPED** — no PDF scrape | Replace with three structured sources: (1) `desagri.gov.in` Table 14.4(a) state-wise N/P/K consumption (PDF + Excel, annual, geo-blocked from US → needs India-resident runner or VPN); (2) `data.gov.in` Dept-of-Fertilizers resources via the `datagovindia` Python wrapper (CSV/JSON/REST, free API key); (3) ICRISAT District Level Data (`data.icrisat.org/dld/src/inputs.html`) for the per-crop allocation (rice/wheat/cotton/sugarcane) — the one field FAI uniquely had |
-| **India DOF Monthly Bulletin (PDF)** | **KEEP** — only path to monthly MRP / monthly sales | Layer two supplementary sources alongside it: (a) `data.gov.in` annual subsidy + consumption (ground truth + reconciliation, free API key); (b) PIB press-release scraper for NBS rate-change events (semi-annual cabinet approvals → drives the subsidy/ton time series) |
+| **India FAI Yearbook (PDF)** | **DROPPED** — no PDF scrape | Replace with structured sources: (1) `desagri.gov.in` Table 14.4(a) state-wise N/P/K consumption (PDF + Excel, annual, **geo-blocked from US** → needs India-resident runner or VPN); (2) `data.gov.in` Dept-of-Fertilizers via REST + public guest API key — **annual subsidy + annual all-India consumption now wired** in puller as of 2026-05-22 evening; (3) Cost of Cultivation Survey (CCS) via `eands.dacnet.nic.in` for the per-crop allocation. **ICRISAT DLD was originally listed here but is incorrect** — investigated 2026-05-22 evening, ICRISAT publishes aggregate seasonal N/P/K by district, **NOT per-crop**. CCS is the only open per-crop source. |
+| **India DOF Monthly Bulletin (PDF)** | **KEEP** — only path to monthly MRP / monthly sales | Layer two supplementary sources alongside it: (a) `data.gov.in` annual subsidy + consumption (now wired, source = `india_dof_subsidy` + `india_dof_consumption`); (b) PIB press-release scraper for NBS rate-change events (semi-annual cabinet approvals → drives the subsidy/ton time series — not yet wired) |
 | **DoF iFMS / e-Urvarak / mFMS** | **DEFERRED** — not a scraper task | Real-time PoS sales by state/district/retailer; login-gated; only path is a DoF data-sharing MoU. Move to a foundation-relationship workstream, not the scraper roadmap |
 | **IFDC Africa Fertilizer Watch / VIFAA** | **DONE 2026-05-22** | `Get-AfricaFertilizer` rewired to `POST /api/prices/seriesByProducts` via GET-defaults-then-POST workflow. Body must include `countryIso` (ISO2 string) + `lang` + endpoint-specific product field (singular `compoundProductSelected` vs plural `compoundProductsSelected`). Reverse-engineered from `viz.africafertilizer.org/static/js/main.220c333c.js.map` — full unminified API client + 35-chart endpoint mapping in `data/_afe_discovery/`. First pull: 3,668 rows, 10/11 priority countries. Ethiopia still empty on this endpoint (needs `/byProductsAndDates` fallback — open chad). |
+
+## Notable findings (2026-05-22)
+
+### Full N / P2O5 / K2O kg/ha-arable breakdown, 2023 (FAOSTAT direct)
+
+| Country | N | P2O5 | K2O | Total (OWID) |
+|---|---|---|---|---|
+| CHN | 192.39 | 73.40 | 69.08 | 394.02 |
+| IND | 121.53 | 49.35 | 11.16 | 199.14 |
+| BRA | 90.92 | 69.99 | 124.43 | 344.09 |
+| ZAF | 30.50 | 21.67 | 14.99 | 77.19 |
+| **ETH** | 29.65 | **10.51** | 0.11 | 45.32 |
+| KEN | 22.31 | 13.47 | 9.03 | 50.46 |
+| TZA | 12.12 | 4.81 | 1.08 | 20.71 |
+| NGA | 1.99 | 1.03 | 0.52 | 4.24 |
+| UGA | 1.28 | 0.55 | 0.70 | 3.33 |
+
+### Ethiopia P-stress callout
+
+Ethiopia has the **steepest P-fertilizer dependency in Tier-1 SSA** (10.51 kg P2O5/ha — 3rd
+highest globally after BRA + CHN among the 9 baseline countries, ahead of even KEN and ZAF).
+If DAP prices spike per the Iran/Hormuz scenario, **ETH is the most exposed market in the BB2
+priority set**. PSO products (INITIA, Biotango) become the highest-leverage play here — not
+just NFX. Today's BB2 portfolio has zero ongoing PSO products allocated to Ethiopia.
+
+### Tier-1 SSA N-baselines are catastrophically below the 20 kg/ha TPP
+
+OWID revised Nigeria (11.78 → 4.24 kg/ha total) and Uganda (9.29 → 3.33) downward in 2024.
+The FAOSTAT N component is even lower: NGA 1.99 kg N/ha, UGA 1.28 kg N/ha. The 20 kg/ha N
+TPP is **3-4× current N application** in those markets, not displacement. A "first kg of N"
+framing fits the data; a 20 kg displacement framing does not.
+
+### FAOSTAT metadata gotcha
+
+The FAOSTAT RFN bulk `Inputs_FertilizersNutrient_E_ItemCodes.csv` lists only Item Code 3102
+(Nitrogen). The data CSV itself actually contains 3102 (N), 3103 (P2O5), and 3104 (K2O) —
+the metadata file is stale. **Don't trust FAOSTAT's `ItemCodes.csv`; probe the data CSV
+directly.** This bug cost a day; the original "FAOSTAT has no P+K" diagnosis was wrong.
 
 ## Architecture notes
 

@@ -17,15 +17,12 @@
     Requires: pwsh 7+, Python 3.11+ with pandas + pyarrow, Pester 5+.
 #>
 
-BeforeDiscovery {
-    $script:repoRoot = Split-Path -Parent $PSScriptRoot
-    $script:pricesParquet = Join-Path $repoRoot 'data\prices.parquet'
-    $script:useParquet    = Join-Path $repoRoot 'data\use.parquet'
-}
-
 Describe 'fertilizer_market artifacts' {
 
     BeforeAll {
+        $script:repoRoot      = Split-Path -Parent $PSScriptRoot
+        $script:pricesParquet = Join-Path $script:repoRoot 'data\prices.parquet'
+        $script:useParquet    = Join-Path $script:repoRoot 'data\use.parquet'
         $script:py = (Get-Command python -ErrorAction Stop).Source
         $script:summaryScript = @'
 import json, sys, pandas as pd
@@ -64,12 +61,26 @@ print(json.dumps({
                           'source_url','retrieved_at','review_flags')
             $s.cols | Should -Be $expected
         }
-        It 'contains at least one row' {
-            (Get-ParquetSummary -Path $script:pricesParquet).rows | Should -BeGreaterThan 0
+        It 'contains at least 5000 rows (Pink Sheet + AFE together)' {
+            (Get-ParquetSummary -Path $script:pricesParquet).rows | Should -BeGreaterThan 5000
         }
-        It 'covers at least one of the expected sources' {
+        It 'contains both wb_pinksheet AND africafertilizer' {
             $sources = (Get-ParquetSummary -Path $script:pricesParquet).sources.PSObject.Properties.Name
-            ($sources | Where-Object { $_ -in 'wb_pinksheet','africafertilizer' }).Count | Should -BeGreaterThan 0
+            $sources | Should -Contain 'wb_pinksheet'
+            $sources | Should -Contain 'africafertilizer'
+        }
+        It 'has Ethiopia absent in africafertilizer (known VIFAA upstream data gap)' {
+            $py = @'
+import sys, pandas as pd
+p = pd.read_parquet(sys.argv[1])
+afe = p[p["source"] == "africafertilizer"]
+print("YES" if (afe["country_iso3"] == "ETH").any() else "NO")
+'@
+            $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "fertest_eth_$(Get-Random).py"
+            [System.IO.File]::WriteAllText($tmp, $py)
+            try {
+                (& $script:py $tmp $script:pricesParquet).Trim() | Should -Be 'NO'
+            } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
         }
     }
 
@@ -84,12 +95,31 @@ print(json.dumps({
                           'source_url','retrieved_at','review_flags')
             $s.cols | Should -Be $expected
         }
-        It 'contains at least 100 rows (FAOSTAT alone exceeds this)' {
-            (Get-ParquetSummary -Path $script:useParquet).rows | Should -BeGreaterThan 100
+        It 'contains at least 80000 rows (FAOSTAT N+P+K + OWID + WDI)' {
+            (Get-ParquetSummary -Path $script:useParquet).rows | Should -BeGreaterThan 80000
         }
-        It 'covers at least two distinct sources' {
+        It 'includes faostat as a source with all three nutrients (N, P2O5, K2O)' {
+            $py = @'
+import sys, pandas as pd
+p = pd.read_parquet(sys.argv[1])
+fao = p[p["source"] == "faostat"]
+nuts = set(fao["nutrient"].dropna().unique())
+need = {"N","P2O5","K2O"}
+print(",".join(sorted(need - nuts)) or "OK")
+'@
+            $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "fertest_fao_$(Get-Random).py"
+            [System.IO.File]::WriteAllText($tmp, $py)
+            try {
+                (& $script:py $tmp $script:useParquet).Trim() | Should -Be 'OK'
+            } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+        }
+        It 'includes faostat_product cross-check rows for P2O5 + K2O' {
             $sources = (Get-ParquetSummary -Path $script:useParquet).sources.PSObject.Properties.Name
-            $sources.Count | Should -BeGreaterThan 1
+            $sources | Should -Contain 'faostat_product'
+        }
+        It 'includes india_dof_consumption rows (India v2 source)' {
+            $sources = (Get-ParquetSummary -Path $script:useParquet).sources.PSObject.Properties.Name
+            $sources | Should -Contain 'india_dof_consumption'
         }
         It 'spans more than one country' {
             (Get-ParquetSummary -Path $script:useParquet).iso3_n | Should -BeGreaterThan 1

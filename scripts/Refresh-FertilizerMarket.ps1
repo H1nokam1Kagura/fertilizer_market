@@ -194,10 +194,18 @@ function Get-AfricaFertilizer {
     }
     $base = 'https://admin.africafertilizer.org'
     $sleepSec = 2
+    # VIFAA countries with confirmed upstream data gaps — skip the round-trip to save 30s/run.
+    # ETH 2026-05-22: compoundProductsSelected is empty in both seriesByProducts and byProducts
+    # filter defaults, despite /compoundProductsList returning 6 products. Genuine gap.
+    $vifaaGapCountries = @('ETH')
     foreach ($iso3 in $Iso3List) {
         $iso2 = $Script:VIFAA_ISO3_TO_ISO2[$iso3]
         if (-not $iso2) {
             Write-Warning "[PRICE] AfricaFertilizer $iso3 — not in VIFAA dataset, skipping"
+            continue
+        }
+        if ($iso3 -in $vifaaGapCountries) {
+            Write-Host "[PRICE] AfricaFertilizer $iso3 — known VIFAA data gap (empty compoundProductsSelected), skipping"
             continue
         }
         $dest = Join-Path $DestDir "afe_$iso3.csv"
@@ -378,6 +386,35 @@ function Get-OWIDFertUse {
     Write-Host "[USE] OWID → $DestCsv"
 }
 
+function Get-DataGovInFertilizer {
+    param([string]$DestDir)
+    # India Department of Fertilizers data via data.gov.in REST. Public guest API key works.
+    # Two resources pulled: (1) annual subsidy by product 2002-03→present, (2) annual all-India
+    # consumption by product 2015-16→2020-21. CKAN path (/api/3/action/...) does NOT work —
+    # returns 500. Use api.data.gov.in/resource/<UUID> directly.
+    $key = $env:DATAGOVIN_API_KEY
+    if (-not $key) { $key = '579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b' }  # public guest
+    $base = 'https://api.data.gov.in/resource'
+    $resources = @{
+        subsidy     = '2e0e6c04-97f2-456b-9309-bf605650cb11'  # Year, Product, Subsidy_In_Rs_Crores
+        consumption = '755bdf8b-956e-418c-9835-3ca4fd5b1b43'  # Year-wise, Urea, DAP, MOP, NPKS (lakh MT)
+    }
+    foreach ($name in $resources.Keys) {
+        $uuid = $resources[$name]
+        $dest = Join-Path $DestDir "india_dof_$name.csv"
+        $url  = "${base}/${uuid}?api-key=$key&format=csv&limit=1000"
+        try {
+            Invoke-WithRetry -Label "datagovin-$name" -Max 3 -BackoffSec 5 -Script {
+                Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -TimeoutSec 60
+            }
+            $rowCount = (Get-Content $dest | Measure-Object -Line).Lines - 1
+            Write-Host "[INDIA-DOF] $name → $dest ($rowCount data rows)"
+        } catch {
+            Write-Warning "[INDIA-DOF] $name failed: $($_.Exception.Message)"
+        }
+    }
+}
+
 function Get-WBWDIFertUse {
     param([string]$DestJson)
     # AG.CON.FERT.ZS = Fertilizer consumption (kg/ha of arable land)
@@ -402,6 +439,7 @@ $results = @{
     faostat_product   = $null
     owid              = $null
     wb_wdi            = $null
+    india_dof         = $null
 }
 
 try { Get-WBPinkSheet -DestXlsx (Join-Path $staging 'pinksheet.xlsx');     $results.wb_pinksheet = 'ok' }
@@ -423,6 +461,12 @@ catch { Write-Warning "[USE] OWID failed: $($_.Exception.Message)"; $results.owi
 
 try { Get-WBWDIFertUse -DestJson (Join-Path $staging 'wb_wdi.json');      $results.wb_wdi = 'ok' }
 catch { Write-Warning "[USE] WB WDI failed: $($_.Exception.Message)"; $results.wb_wdi = "fail: $($_.Exception.Message)" }
+
+try {
+    $indiaDir = Join-Path $staging 'india_dof'; New-Item -ItemType Directory -Path $indiaDir -Force | Out-Null
+    Get-DataGovInFertilizer -DestDir $indiaDir
+    $results.india_dof = 'ok'
+} catch { Write-Warning "[INDIA-DOF] failed: $($_.Exception.Message)"; $results.india_dof = "fail: $($_.Exception.Message)" }
 
 # ── NORMALIZE (embedded Python) ─────────────────────────────────────────────
 
@@ -830,6 +874,133 @@ if results.get('wb_wdi') == 'ok':
         print(f'wb_wdi rows: {len(wdi_rows)}', file=sys.stderr)
     except Exception as e:
         print(f'wb_wdi parse failed: {e}', file=sys.stderr)
+
+# ── India DOF (data.gov.in) ────────────────────────────────────────────────
+# Two resources:
+#  (a) Annual subsidy by product (Year, Product, Subsidy_In_Rs_Crores) → fertilizer_price
+#      with market_level='subsidy_total_inr_crores', month=12, country='IND'
+#  (b) Annual all-India consumption (Year-wise, Urea, DAP, MOP, NPKS in lakh MT)
+#      → fertilizer_use via nutrient derivation (urea=46N, DAP=18N+46P2O5, MOP=60K2O)
+if results.get('india_dof') == 'ok':
+    src_subsidy = 'https://api.data.gov.in/resource/2e0e6c04-97f2-456b-9309-bf605650cb11'
+    src_cons    = 'https://api.data.gov.in/resource/755bdf8b-956e-418c-9835-3ca4fd5b1b43'
+    idof_dir = staging / 'india_dof'
+
+    # ── (a) Subsidy → fertilizer_price
+    try:
+        subsidy_csv = idof_dir / 'india_dof_subsidy.csv'
+        if subsidy_csv.exists():
+            df = pd.read_csv(subsidy_csv)
+            # Normalize column names: lowercase, collapse whitespace, strip non-alphanumeric.
+            # Real header: "Subsidy              (In Rs.Crores)" — has multiple spaces.
+            def norm(c): return re.sub(r'[^a-z0-9]+', '_', c.lower()).strip('_')
+            df.columns = [norm(c) for c in df.columns]
+            def pickc(*needles):
+                for needle in needles:
+                    needle_n = norm(needle)
+                    for c in df.columns:
+                        if needle_n in c: return c
+                return None
+            cyear = pickc('year')
+            cprod = pickc('product','particulars','item')
+            cval  = pickc('subsidy','rs_crores','crores')
+            sub_rows = []
+            if cyear and cprod and cval:
+                for _, r in df.iterrows():
+                    yraw = str(r.get(cyear,'')).strip()
+                    if not yraw or yraw.lower()=='nan': continue
+                    # Year may be '2019-20' or '2019' — take the START year
+                    ymatch = re.match(r'(\d{4})', yraw)
+                    if not ymatch: continue
+                    yr = int(ymatch.group(1))
+                    prod_raw = str(r.get(cprod,'')).strip().lower()
+                    prod = ('urea_indigenous' if 'indigenous' in prod_raw and 'urea' in prod_raw
+                            else 'urea_imported' if 'imported' in prod_raw and 'urea' in prod_raw
+                            else 'pk_indigenous' if 'indigenous' in prod_raw and ('p&k' in prod_raw or 'p & k' in prod_raw)
+                            else 'pk_imported' if 'imported' in prod_raw and ('p&k' in prod_raw or 'p & k' in prod_raw)
+                            else re.sub(r'[^a-z0-9_]+','_', prod_raw))
+                    try: v = float(r.get(cval))
+                    except: continue
+                    if pd.isna(v): continue
+                    sub_rows.append({
+                        'source':'india_dof_subsidy',
+                        'source_record_id': f'india_dof_subsidy|{prod}|IND|{yr}',
+                        'country_iso3': 'IND', 'country_name': 'India',
+                        'product': prod, 'product_grade': None,
+                        'market_level': 'subsidy_total_inr_crores',
+                        'year': yr, 'month': 12,
+                        'price_usd_per_t': None, 'price_local_per_t': v,
+                        'currency': 'INR_crores_total',
+                        'source_url': src_subsidy, 'retrieved_at': retrieved_at,
+                        'review_flags': 'annual_subsidy_total_not_per_ton',
+                    })
+            if sub_rows:
+                prices = pd.concat([prices, pd.DataFrame(sub_rows, columns=PRICE_COLS)], ignore_index=True)
+            print(f'india_dof_subsidy rows: {len(sub_rows)}', file=sys.stderr)
+    except Exception as e:
+        print(f'india_dof subsidy parse failed: {e}', file=sys.stderr)
+
+    # ── (b) Consumption → fertilizer_use (nutrient-derived)
+    try:
+        cons_csv = idof_dir / 'india_dof_consumption.csv'
+        if cons_csv.exists():
+            df = pd.read_csv(cons_csv)
+            # Schema: Year-wise + Urea + DAP + MOP + NPKS (lakh MT, double)
+            def norm2(c): return re.sub(r'[^a-z0-9]+', '_', c.lower()).strip('_')
+            df.columns = [norm2(c) for c in df.columns]
+            year_col = next((c for c in df.columns if 'year' in c), None)
+            prod_to_pct = {
+                'urea': {'N': 46.0},
+                'dap':  {'N': 18.0, 'P2O5': 46.0},
+                'mop':  {'K2O': 60.0},
+                # NPKS: variable composition — skip
+            }
+            cons_rows = []
+            if year_col:
+                for _, r in df.iterrows():
+                    yraw = str(r.get(year_col,'')).strip()
+                    if not yraw or yraw.lower()=='nan': continue
+                    ymatch = re.match(r'(\d{4})', yraw)
+                    if not ymatch: continue
+                    yr = int(ymatch.group(1))
+                    for prod_key, nutmap in prod_to_pct.items():
+                        match_col = next((c for c in df.columns if prod_key in c), None)
+                        if not match_col: continue
+                        try: lakh_mt = float(r.get(match_col))
+                        except: continue
+                        if pd.isna(lakh_mt) or lakh_mt == 0: continue
+                        tonnes = lakh_mt * 100_000.0  # lakh MT → tonnes
+                        for nutrient, pct in nutmap.items():
+                            cons_rows.append({
+                                'source':'india_dof_consumption',
+                                'source_record_id': f'india_dof_consumption|IND|{nutrient}|{yr}|{prod_key}',
+                                'country_iso3': 'IND', 'country_name': 'India',
+                                'year': yr, 'nutrient': nutrient,
+                                'total_tonnes': tonnes * (pct / 100.0),
+                                'kg_per_ha_arable': None, 'arable_land_ha': None,
+                                'source_url': src_cons, 'retrieved_at': retrieved_at,
+                                'review_flags': f'derived_from_product_{prod_key}',
+                            })
+            # Roll up per (year, nutrient) — combine N from Urea + DAP, etc.
+            if cons_rows:
+                cdf = pd.DataFrame(cons_rows, columns=USE_COLS)
+                rollup = (cdf.groupby(['country_iso3','country_name','year','nutrient'], as_index=False)
+                             .agg({'total_tonnes':'sum',
+                                   'review_flags': lambda s: 'derived_from_products:' + ','.join(sorted(set(
+                                       ','.join(s).replace('derived_from_product_','').split(','))))}))
+                rollup['source']           = 'india_dof_consumption'
+                rollup['source_record_id'] = (rollup['source'] + '|IND|' + rollup['nutrient'] + '|' + rollup['year'].astype(str))
+                rollup['kg_per_ha_arable'] = None
+                rollup['arable_land_ha']   = None
+                rollup['source_url']       = src_cons
+                rollup['retrieved_at']     = retrieved_at
+                rollup = rollup[USE_COLS]
+                use = pd.concat([use, rollup], ignore_index=True)
+                print(f'india_dof_consumption rows: {len(rollup)} (from {len(cons_rows)} product-nutrient pairs)', file=sys.stderr)
+            else:
+                print('india_dof_consumption rows: 0', file=sys.stderr)
+    except Exception as e:
+        print(f'india_dof consumption parse failed: {e}', file=sys.stderr)
 
 # ── PRESERVE prior rows for any source that failed ──────────────────────────
 def preserve(df, prev_path, src_status, cols):

@@ -40,12 +40,23 @@ jobs:
           git config user.email "actions@github.com"
           # refresh_log.csv is gitignored; explicit list keeps the commit scope deliberate.
           git add data/prices.parquet data/prices.csv data/use.parquet data/use.csv
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: weekly fertilizer refresh $(date -u +%Y-%m-%d)"
-            git push
-          else
+          if git diff --cached --quiet; then
             echo "No changes to publish"
+            exit 0
           fi
+          git commit -m "chore: weekly fertilizer refresh $(date -u +%Y-%m-%d)"
+          # Defend against concurrent pushes (Saturday cron + manual workflow_dispatch +
+          # human-authored commits). Rebase on top of latest origin/main, retry push up to 3x.
+          for i in 1 2 3; do
+            git pull --rebase --autostash origin main || true
+            if git push origin main; then
+              exit 0
+            fi
+            echo "push attempt $i failed, retrying"
+            sleep 5
+          done
+          echo "push failed after 3 attempts"
+          exit 1
 
       - name: Notify Databricks (optional — triggers load job)
         if: env.DATABRICKS_HOST != '' && env.DATABRICKS_REFRESH_JOB_ID != ''

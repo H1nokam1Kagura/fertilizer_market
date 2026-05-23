@@ -225,17 +225,19 @@ PRICE_COLS = ['source','source_record_id','country_iso3','country_name','product
 
 # Recognised nutrient labels that appear in PIB NBS tables. PIB releases use a mix
 # of "Nitrogen (N)" / "N" / "Phosphate (P)" / "P2O5" / "Potash (K)" / "K2O" / "Sulphur (S)".
+# Tight patterns — must match a header-style cell (a few words max), not free text.
 NUTRIENT_PATTERNS = {
-    'N': r'\b(nitrogen|^n$|\bn\b)\b',
-    'P': r'\b(phosphor|phosphat|p2o5|^p$|\bp\b)\b',
-    'K': r'\b(potash|potassi|k2o|^k$|\bk\b)\b',
-    'S': r'\b(sulphur|sulfur|^s$|\bs\b)\b',
+    'N': r'^(n|nitrogen|n\s*\(nitrogen\))$',
+    'P': r'^(p|p2o5|phosphate|phosphor[a-z]*|p\s*\(phosphor[a-z]*\))$',
+    'K': r'^(k|k2o|potash|potassium|k\s*\(potash\))$',
+    'S': r'^(s|sulphur|sulfur|s\s*\(sulphur\))$',
 }
 
 def classify_nutrient(label):
     s = str(label).strip().lower()
+    s = re.sub(r'\s+', ' ', s)
     for nut, pat in NUTRIENT_PATTERNS.items():
-        if re.search(pat, s, re.I): return nut
+        if re.match(pat, s, re.I): return nut
     return None
 
 def month_from_season(season, announced_date):
@@ -304,46 +306,69 @@ for entry in manifest:
         diag_entry['reason'] = 'cannot resolve effective year/month from seed row'
         diag.append(diag_entry); continue
 
+    # PIB NBS tables follow a column-major layout:
+    #   header row: ["N", "P", "K", "S"]                   (one cell per nutrient)
+    #   data row:   [period_label?, rate_N, rate_P, rate_K, rate_S]
+    # Sometimes there's a leading "Year"/"Period" column in the header row.
+    # The script dedupes across tables (PIB's iframe wrapper repeats the same
+    # table 3x) by tracking (prid, nut) keys already emitted.
     nutrient_rows_this = 0
+    emitted_keys = set()
     for tbl_idx, tbl in enumerate(tables):
-        # Find a row where the first cell is a nutrient label and a numeric rate follows.
-        for tr in tbl.find_all('tr'):
+        trs = tbl.find_all('tr')
+        for ri, tr in enumerate(trs):
             cells = [td.get_text(' ', strip=True) for td in tr.find_all(['td','th'])]
             if len(cells) < 2: continue
-            nut = classify_nutrient(cells[0])
-            if not nut: continue
-            # Try each subsequent cell, take the first one that parses as a number.
-            rate = None
-            for c in cells[1:]:
-                v = parse_money_per_kg(c)
-                if v is not None and v > 0:
-                    rate = v; break
-            if rate is None: continue
-
-            # NBS rates are nearly always Rs/kg. If the magnitude looks like Rs/MT
-            # (i.e. > 1000) we still emit it but flag for review.
-            flags = ['parsed_from_html']
-            if rate > 1000:
-                flags.append('magnitude_suspect_inr_per_mt')
-
-            rows.append({
-                'source':           'india_pib_nbs',
-                'source_record_id': f'pib_nbs|{prid}|{nut}|{yr}-{mo:02d}',
-                'country_iso3':     'IND',
-                'country_name':     'India',
-                'product':          nut,
-                'product_grade':    None,
-                'market_level':     'subsidy_inr_per_kg',
-                'year':             yr,
-                'month':            mo,
-                'price_usd_per_t':  None,
-                'price_local_per_t': rate * 1000.0,  # kg → tonne
-                'currency':         'INR',
-                'source_url':       source_url,
-                'retrieved_at':     retrieved_at,
-                'review_flags':     ';'.join(flags) + (f';table_idx={tbl_idx}'),
-            })
-            nutrient_rows_this += 1
+            # Identify each cell that is a nutrient header.
+            header_nuts = []
+            for ci, c in enumerate(cells):
+                n = classify_nutrient(c)
+                header_nuts.append((ci, n) if n else (ci, None))
+            nut_positions = [(ci, n) for ci, n in header_nuts if n]
+            if len(nut_positions) < 2: continue
+            # Found a column-major nutrient-header row. The next row is the data row.
+            if ri + 1 >= len(trs): continue
+            data_cells = [td.get_text(' ', strip=True) for td in trs[ri+1].find_all(['td','th'])]
+            # Map nutrient header positions to data positions. If the data row
+            # has one more cell than the header (period label prefix), shift +1.
+            offset = 0
+            if len(data_cells) == len(cells) + 1:
+                offset = 1
+            elif len(data_cells) == len(cells):
+                offset = 0
+            else:
+                # Try to align by finding the first numeric cell in data row.
+                first_numeric = next((i for i, c in enumerate(data_cells) if parse_money_per_kg(c) is not None), None)
+                first_nut_col = nut_positions[0][0]
+                offset = (first_numeric - first_nut_col) if (first_numeric is not None) else 0
+            for ci, nut in nut_positions:
+                key = (prid, nut)
+                if key in emitted_keys: continue
+                data_ci = ci + offset
+                if data_ci < 0 or data_ci >= len(data_cells): continue
+                rate = parse_money_per_kg(data_cells[data_ci])
+                if rate is None or rate <= 0: continue
+                flags = ['parsed_from_html']
+                if rate > 1000: flags.append('magnitude_suspect_inr_per_mt')
+                rows.append({
+                    'source':           'india_pib_nbs',
+                    'source_record_id': f'pib_nbs|{prid}|{nut}|{yr}-{mo:02d}',
+                    'country_iso3':     'IND',
+                    'country_name':     'India',
+                    'product':          nut,
+                    'product_grade':    None,
+                    'market_level':     'subsidy_inr_per_kg',
+                    'year':             yr,
+                    'month':            mo,
+                    'price_usd_per_t':  None,
+                    'price_local_per_t': rate * 1000.0,
+                    'currency':         'INR',
+                    'source_url':       source_url,
+                    'retrieved_at':     retrieved_at,
+                    'review_flags':     ';'.join(flags) + f';table_idx={tbl_idx}',
+                })
+                emitted_keys.add(key)
+                nutrient_rows_this += 1
 
     diag_entry['nutrient_rows'] = nutrient_rows_this
     if nutrient_rows_this == 0:

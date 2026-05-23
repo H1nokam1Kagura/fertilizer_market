@@ -18,6 +18,13 @@ prid,announced_date,season,fiscal_year,notes
 #   fiscal_year    — e.g. 2024-25 (Indian fiscal year of effect)
 #   notes          — free text (e.g. "DAP special package included")
 #
-# Example seed rows (UNVERIFIED — replace with real PRIDs before first run):
-# 1925394,2023-05-17,kharif,2023-24,
-# 1968471,2023-10-04,rabi,2023-24,
+# Verified PRIDs (2021-2025, sourced from PIB search 2026-05-22):
+1763349,2021-10-12,rabi,2021-22,Rabi 2021-22 (01.10.2021-31.03.2022)
+1820522,2022-04-27,kharif,2022-23,Kharif 2022 (01.04.2022-30.09.2022); SSP freight subsidy + DAP special support
+1873019,2022-10-12,rabi,2022-23,Rabi 2022-23 (01.10.2022-31.03.2023); subsidy Rs 51875 cr
+1924767,2023-05-17,kharif,2023-24,Combined Rabi 2022-23 revision (Jan-Mar 23) + Kharif 2023 (Apr-Sep 23); parser keys on kharif effective date
+1970773,2023-10-26,rabi,2023-24,Rabi 2023-24 (01.10.2023-31.03.2024)
+2010125,2024-02-28,kharif,2024-25,Kharif 2024 (01.04.2024-30.09.2024); 3 new fertilizer grades added; subsidy Rs 24420 cr
+2055988,2024-10-09,rabi,2024-25,Rabi 2024-25 (01.10.2024-31.03.2025); subsidy Rs 24475.53 cr
+2116176,2025-03-28,kharif,2025-26,Kharif 2025 (01.04.2025-30.09.2025)
+2183292,2025-10-01,rabi,2025-26,Rabi 2025-26 (01.10.2025-31.03.2026)

@@ -1,0 +1,24 @@
+iso3,country_name,region,priority_tier
+AGO,Angola,SSA,2
+BFA,Burkina Faso,SSA,2
+BRA,Brazil,LatAm,3
+CHN,China,Asia,
+COL,Colombia,LatAm,2
+ETH,Ethiopia,SSA,1
+GHA,Ghana,SSA,2
+IND,India,Asia,1
+KEN,Kenya,SSA,2
+MLI,Mali,SSA,2
+MOZ,Mozambique,SSA,2
+MWI,Malawi,SSA,2
+MYS,Malaysia,Asia,
+NER,Niger,SSA,2
+NGA,Nigeria,SSA,1
+RWA,Rwanda,SSA,2
+SEN,Senegal,SSA,2
+TZA,Tanzania,SSA,1
+UGA,Uganda,SSA,1
+USA,United States,NAm,
+ZAF,South Africa,SSA,2
+ZMB,Zambia,SSA,2
+ZWE,Zimbabwe,SSA,2

@@ -1,0 +1,57 @@
+name: weekly-refresh
+
+on:
+  schedule:
+    # Saturday 22:00 UTC — backup path before the Sunday 03:00 UTC Databricks Job
+    - cron: '0 22 * * 6'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python deps
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas openpyxl pyarrow
+
+      - name: Run PowerShell refresh (no Databricks push)
+        shell: pwsh
+        run: |
+          ./scripts/Refresh-FertilizerMarket.ps1 -SkipDatabricksPush
+
+      - name: Detect changes
+        id: changes
+        shell: pwsh
+        run: |
+          git add data/
+          $changed = (git diff --cached --name-only | Measure-Object).Count -gt 0
+          "changed=$changed" >> $env:GITHUB_OUTPUT
+
+      - name: Create PR with refreshed data
+        if: steps.changes.outputs.changed == 'True'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: refresh-bot/${{ github.run_id }}
+          title: 'data: weekly fertilizer refresh'
+          body: |
+            Automated weekly refresh of `data/prices.parquet` and `data/use.parquet`.
+
+            Sources pulled: WB Pink Sheet, AfricaFertilizer, FAOSTAT, OWID, WB WDI.
+            Databricks push is **skipped** in this run — the Sunday 03:00 UTC Databricks Job
+            performs the canonical Delta load. This PR is the backup-path data commit only.
+          commit-message: 'data: weekly fertilizer refresh (${{ github.run_id }})'

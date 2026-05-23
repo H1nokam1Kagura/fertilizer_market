@@ -13,6 +13,10 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      DATABRICKS_REFRESH_JOB_ID: ${{ vars.DATABRICKS_REFRESH_JOB_ID }}
 
     steps:
       - uses: actions/checkout@v4
@@ -43,10 +47,10 @@ jobs:
           fi
 
       - name: Notify Databricks (optional — triggers load job)
-        if: ${{ secrets.DATABRICKS_HOST != '' && vars.DATABRICKS_REFRESH_JOB_ID != '' }}
+        if: env.DATABRICKS_HOST != '' && env.DATABRICKS_REFRESH_JOB_ID != ''
         run: |
           curl -X POST \
-            -H "Authorization: Bearer ${{ secrets.DATABRICKS_TOKEN }}" \
+            -H "Authorization: Bearer $DATABRICKS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"job_id": ${{ vars.DATABRICKS_REFRESH_JOB_ID }}}' \
-            ${{ secrets.DATABRICKS_HOST }}/api/2.1/jobs/run-now
+            -d "{\"job_id\": $DATABRICKS_REFRESH_JOB_ID}" \
+            "$DATABRICKS_HOST/api/2.1/jobs/run-now"

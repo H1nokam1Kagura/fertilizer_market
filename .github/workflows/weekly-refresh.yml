@@ -27,7 +27,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          pip install pandas openpyxl pyarrow
+          pip install -r requirements.txt
 
       - name: Run PowerShell refresh (no Databricks push)
         shell: pwsh

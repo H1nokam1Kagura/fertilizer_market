@@ -1,0 +1,15 @@
+# Python dependencies for fertilizer_market refresh + scrapers.
+# Used by:
+#   scripts/Refresh-FertilizerMarket.ps1   (embedded Python — WB Pink Sheet, FAOSTAT, OWID, WB WDI, AFE, India DOF)
+#   scripts/Refresh-IndiaNBS.ps1           (embedded Python — PIB press release HTML parser)
+#   databricks/weekly_refresh.py           (Databricks Job entrypoint)
+#   .github/workflows/weekly-refresh.yml   (backup runner)
+#
+# Minimum-version pins. PowerShell scripts are PS 7+ — see script headers for unrelated runtime reqs.
+
+pandas>=2.0
+pyarrow>=14.0
+openpyxl>=3.1
+pycountry>=23.12
+beautifulsoup4>=4.12
+lxml>=5.0

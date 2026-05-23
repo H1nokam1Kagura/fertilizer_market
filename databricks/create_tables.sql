@@ -26,10 +26,11 @@ TBLPROPERTIES (
 );
 
 CREATE TABLE IF NOT EXISTS ggo_agdev.bioinputs.fertilizer_use (
-  source              STRING  COMMENT 'faostat | owid | wb_wdi | india_fai',
-  source_record_id    STRING  COMMENT 'source + iso3 + nutrient + year',
+  source              STRING  COMMENT 'faostat | faostat_product | owid | wb_wdi | india_dof_consumption | india_dof_state_consumption | india_dof_district_npk',
+  source_record_id    STRING  COMMENT 'source + iso3 + nutrient + year (+ state/district if sub-national)',
   country_iso3        STRING,
   country_name        STRING,
+  state_or_region     STRING  COMMENT 'Sub-national name (Indian state/UT, district, US state, etc.). NULL for national rows.',
   year                INT,
   nutrient            STRING  COMMENT 'N | P2O5 | K2O | total',
   total_tonnes        DOUBLE  COMMENT 'NULL if only kg/ha reported',
@@ -42,5 +43,5 @@ CREATE TABLE IF NOT EXISTS ggo_agdev.bioinputs.fertilizer_use (
 PARTITIONED BY (year)
 TBLPROPERTIES (
   'delta.feature.allowColumnDefaults' = 'enabled',
-  'comment' = 'Annual fertilizer use by country and nutrient. Sources: FAOSTAT RFB + OWID + WB WDI + (v2) India FAI. Weekly refresh ingests upstream revisions.'
+  'comment' = 'Annual fertilizer use by country (and optionally sub-national region) and nutrient. Sources: FAOSTAT RFN + FAOSTAT Product P2O5/K2O cross-check, OWID, WB WDI, India DoF (national + state-year + district-year). Weekly refresh.'
 );

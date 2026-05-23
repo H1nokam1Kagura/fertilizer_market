@@ -50,9 +50,9 @@ log = logging.getLogger("refresh")
 PRICE_COLS = ['source', 'source_record_id', 'country_iso3', 'country_name', 'product',
               'product_grade', 'market_level', 'year', 'month', 'price_usd_per_t',
               'price_local_per_t', 'currency', 'source_url', 'retrieved_at', 'review_flags']
-USE_COLS = ['source', 'source_record_id', 'country_iso3', 'country_name', 'year', 'nutrient',
-            'total_tonnes', 'kg_per_ha_arable', 'arable_land_ha', 'source_url',
-            'retrieved_at', 'review_flags']
+USE_COLS = ['source', 'source_record_id', 'country_iso3', 'country_name', 'state_or_region',
+            'year', 'nutrient', 'total_tonnes', 'kg_per_ha_arable', 'arable_land_ha',
+            'source_url', 'retrieved_at', 'review_flags']
 
 # ── HELPERS ─────────────────────────────────────────────────────────────────
 
@@ -330,27 +330,98 @@ def get_wb_wdi(dest: Path) -> None:
     log.info("[USE] WB WDI → %s", dest)
 
 
+DATAGOVIN_KEY_DEFAULT = "579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b"
+
+
+def _fetch_datagovin(uuid: str, dest_csv: Path, label: str, page_size: int = 100) -> int:
+    """Paginate data.gov.in resource into a single CSV. The public guest API key
+    silently caps each call at 10 records regardless of the requested limit; first
+    call probes `total` and subsequent calls iterate `offset`. Returns the row count.
+    """
+    key = os.environ.get("DATAGOVIN_API_KEY", DATAGOVIN_KEY_DEFAULT)
+    base_url = f"https://api.data.gov.in/resource/{uuid}"
+    all_records: list[dict] = []
+    field_meta: list[dict] = []
+    offset = 0
+    total = None
+    while True:
+        url = f"{base_url}?api-key={key}&format=json&limit={page_size}&offset={offset}"
+        def _fetch_page(u=url):
+            r = requests.get(u, headers=DEFAULT_HEADERS, timeout=60)
+            r.raise_for_status()
+            return r.json()
+        page = with_retry(label, _fetch_page)
+        if "error" in page:
+            raise RuntimeError(f"data.gov.in {label}: {page['error']}")
+        if not field_meta:
+            field_meta = page.get("field", [])
+        records = page.get("records", [])
+        if not records:
+            break
+        all_records.extend(records)
+        if total is None:
+            total = page.get("total")
+        if total is not None and len(all_records) >= total:
+            break
+        if len(records) < page_size:
+            # Server returned fewer than requested — likely guest-key 10-row cap.
+            # If we got 10 and total is known, keep going; else stop.
+            if total is None or len(all_records) >= total:
+                break
+        offset += len(records)
+        if offset > 10_000:  # sanity guard
+            break
+    # Write a CSV. Use the field metadata's `id` column as the header so the
+    # download-vs-API field name shapes stay consistent.
+    field_ids = [f.get("id") for f in field_meta if f.get("id")]
+    # Records use the id as the key. Fall back to first record's keys if metadata empty.
+    if not field_ids and all_records:
+        field_ids = list(all_records[0].keys())
+    dest_csv.parent.mkdir(parents=True, exist_ok=True)
+    with dest_csv.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=field_ids, extrasaction="ignore")
+        writer.writeheader()
+        for rec in all_records:
+            writer.writerow(rec)
+    return len(all_records)
+
+
 def get_datagovin_dof(dest_dir: Path) -> None:
     """India Department of Fertilizers via data.gov.in REST. Public guest key
     works without signup. CKAN /api/3/action paths return 500 — use the direct
-    /resource/<UUID> endpoint.
+    /resource/<UUID> endpoint with offset-pagination (guest key caps at 10/call).
     """
-    key = os.environ.get("DATAGOVIN_API_KEY",
-                         "579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b")
-    base = "https://api.data.gov.in/resource"
     resources = {
         "subsidy":     "2e0e6c04-97f2-456b-9309-bf605650cb11",
         "consumption": "755bdf8b-956e-418c-9835-3ca4fd5b1b43",
     }
     for name, uuid in resources.items():
         dest = dest_dir / f"india_dof_{name}.csv"
-        url = f"{base}/{uuid}?api-key={key}&format=csv&limit=1000"
         try:
-            download(url, dest, f"datagovin-{name}", timeout=60)
-            row_count = sum(1 for _ in dest.open(encoding="utf-8")) - 1
-            log.info("[INDIA-DOF] %s → %s (%d data rows)", name, dest, row_count)
+            row_count = _fetch_datagovin(uuid, dest, f"datagovin-{name}")
+            log.info("[INDIA-DOF] %s → %s (%d rows)", name, dest, row_count)
         except Exception as exc:  # noqa: BLE001
             log.warning("[INDIA-DOF] %s failed: %s", name, exc)
+
+
+def get_datagovin_state_consumption(dest: Path) -> None:
+    """State/UT-wise demand/supply/consumption of Urea/DAP/MOP/NPKS 2019-20 to 2023-24
+    (resource c7c7d147-5635-445c-ae05-cb3dfb68e3c0). 37 states × 5 years × 4 products
+    × 3 metrics. Discovered 2026-05-23 via data.gov.in catalog.
+    """
+    row_count = _fetch_datagovin(
+        "c7c7d147-5635-445c-ae05-cb3dfb68e3c0", dest, "datagovin-state-consumption")
+    log.info("[INDIA-DOF-STATE] consumption → %s (%d rows)", dest, row_count)
+
+
+def get_datagovin_district_npk(dest: Path) -> None:
+    """District × Nutrient (N/P/K/Total) chemical fertilizer distributed in tonnes,
+    2019-20 (resource 93051de3-ccea-45b1-8026-5836ae176b10). 30 districts. Discovered
+    2026-05-23. The only data.gov.in source with direct N/P/K (no derivation).
+    """
+    row_count = _fetch_datagovin(
+        "93051de3-ccea-45b1-8026-5836ae176b10", dest, "datagovin-district-npk")
+    log.info("[INDIA-DOF-DISTRICT] npk → %s (%d rows)", dest, row_count)
 
 
 # ── NORMALIZE ───────────────────────────────────────────────────────────────
@@ -547,6 +618,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                     "source_record_id": f"faostat|{rec.iso3}|{rec.nutrient}|{rec.year_i}|{rec.elt_code}",
                     "country_iso3": rec.iso3,
                     "country_name": rec.Area,
+                    "state_or_region": None,
                     "year": rec.year_i,
                     "nutrient": rec.nutrient,
                     "total_tonnes": None,
@@ -621,6 +693,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                         "source": "faostat_product",
                         "source_record_id": f"faostat_product|{rec.iso3}|P2O5|{rec.year_i}|{rec.item_code}",
                         "country_iso3": rec.iso3, "country_name": rec.Area,
+                        "state_or_region": None,
                         "year": rec.year_i, "nutrient": "P2O5",
                         "total_tonnes": rec.tonnes * (p2o5_pct / 100.0),
                         "kg_per_ha_arable": None, "arable_land_ha": None,
@@ -632,6 +705,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                         "source": "faostat_product",
                         "source_record_id": f"faostat_product|{rec.iso3}|K2O|{rec.year_i}|{rec.item_code}",
                         "country_iso3": rec.iso3, "country_name": rec.Area,
+                        "state_or_region": None,
                         "year": rec.year_i, "nutrient": "K2O",
                         "total_tonnes": rec.tonnes * (k2o_pct / 100.0),
                         "kg_per_ha_arable": None, "arable_land_ha": None,
@@ -647,6 +721,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                 rollup["source"] = "faostat_product"
                 rollup["source_record_id"] = (rollup["source"] + "|" + rollup["country_iso3"] + "|" +
                                               rollup["nutrient"] + "|" + rollup["year"].astype(str))
+                rollup["state_or_region"] = None
                 rollup["kg_per_ha_arable"] = None
                 rollup["arable_land_ha"] = None
                 rollup["source_url"] = src_url
@@ -677,6 +752,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                         "source": "owid",
                         "source_record_id": f"owid|{rec.Code}|total|{rec.year_i}",
                         "country_iso3": rec.Code, "country_name": rec.Entity,
+                        "state_or_region": None,
                         "year": rec.year_i, "nutrient": "total",
                         "total_tonnes": None, "kg_per_ha_arable": rec.val_f,
                         "arable_land_ha": None,
@@ -711,6 +787,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                     "source": "wb_wdi",
                     "source_record_id": f"wb_wdi|{iso3}|total|{year_i}",
                     "country_iso3": iso3, "country_name": (r.get("country") or {}).get("value"),
+                    "state_or_region": None,
                     "year": year_i, "nutrient": "total",
                     "total_tonnes": None, "kg_per_ha_arable": float(val),
                     "arable_land_ha": None,
@@ -837,6 +914,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                                     "source": "india_dof_consumption",
                                     "source_record_id": f"india_dof_consumption|IND|{nutrient}|{yr}|{prod_key}",
                                     "country_iso3": "IND", "country_name": "India",
+                                    "state_or_region": None,
                                     "year": yr, "nutrient": nutrient,
                                     "total_tonnes": tonnes * (pct / 100.0),
                                     "kg_per_ha_arable": None, "arable_land_ha": None,
@@ -852,6 +930,7 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                     rollup["source"] = "india_dof_consumption"
                     rollup["source_record_id"] = (rollup["source"] + "|IND|" + rollup["nutrient"] + "|"
                                                   + rollup["year"].astype(str))
+                    rollup["state_or_region"] = None
                     rollup["kg_per_ha_arable"] = None
                     rollup["arable_land_ha"] = None
                     rollup["source_url"] = src_cons
@@ -864,6 +943,143 @@ def normalize(staging: Path, results: dict[str, str], retrieved_at: str) -> tupl
                     log.info("india_dof_consumption rows: 0")
         except Exception as exc:  # noqa: BLE001
             log.warning("india_dof consumption parse failed: %s", exc)
+
+    # ── India DOF state-year consumption (data.gov.in resource c7c7d14...) ──
+    # Wide-format CSV: 37 states × {Urea, DAP, MOP, NPKS} × {DEMAND, SUPPLY, CONSUMPTION}
+    # × 5 years (2019-20 to 2023-24). Only CONSUMPTION is actuals; DEMAND/SUPPLY are
+    # projections. We derive N/P2O5/K2O via the same stoichiometry as india_dof_consumption.
+    if results.get("india_dof_state_consumption") == "ok":
+        src_url = "https://api.data.gov.in/resource/c7c7d147-5635-445c-ae05-cb3dfb68e3c0"
+        csv_path = staging / "india_dof" / "state_consumption.csv"
+        try:
+            df = pd.read_csv(csv_path)
+
+            def norm_col(c: str) -> str:
+                return re.sub(r"[^a-z0-9]+", "_", c.lower()).strip("_")
+
+            df.columns = [norm_col(c) for c in df.columns]
+            state_col = next((c for c in df.columns if c in ("state_ut", "state", "stateut")), None)
+            if not state_col:
+                raise RuntimeError(f"no state column in {list(df.columns)[:5]}...")
+
+            prod_to_pct = {
+                "urea": {"N": 46.0},
+                "dap":  {"N": 18.0, "P2O5": 46.0},
+                "mop":  {"K2O": 60.0},
+                # npks: variable composition — skip
+            }
+            consumption_rows: list[dict] = []
+            for _, row in df.iterrows():
+                state = str(row.get(state_col, "")).strip()
+                if not state or state.lower() in ("nan", "total"):
+                    continue
+                for col in df.columns:
+                    if not col.endswith("_consumption"):
+                        continue
+                    # After norm_col, column shape is: YYYY_YY_PRODUCT_consumption
+                    # (the API field id has triple underscores but our [^a-z0-9]+→_
+                    # normalization collapses them). Match relaxed.
+                    m = re.match(r"^_*(\d{4})_(\d{2})_+([a-z]+)_+consumption$", col)
+                    if not m:
+                        continue
+                    yr = int(m.group(1))
+                    prod_key = m.group(3)
+                    nutmap = prod_to_pct.get(prod_key)
+                    if not nutmap:
+                        continue
+                    try:
+                        lakh_mt = float(row.get(col))
+                    except (TypeError, ValueError):
+                        continue
+                    if pd.isna(lakh_mt) or lakh_mt == 0:
+                        continue
+                    # data.gov.in state consumption is reported in lakh MT (1 lakh = 100,000 t)
+                    tonnes = lakh_mt * 100_000.0
+                    for nutrient, pct in nutmap.items():
+                        consumption_rows.append({
+                            "source": "india_dof_state_consumption",
+                            "source_record_id": (f"india_dof_state_consumption|IND|{state}|"
+                                                 f"{nutrient}|{yr}|{prod_key}"),
+                            "country_iso3": "IND", "country_name": "India",
+                            "state_or_region": state,
+                            "year": yr, "nutrient": nutrient,
+                            "total_tonnes": tonnes * (pct / 100.0),
+                            "kg_per_ha_arable": None, "arable_land_ha": None,
+                            "source_url": src_url, "retrieved_at": retrieved_at,
+                            "review_flags": f"derived_from_product_{prod_key}",
+                        })
+            if consumption_rows:
+                cdf = pd.DataFrame(consumption_rows, columns=USE_COLS)
+                rollup = (cdf.groupby(["country_iso3", "country_name", "state_or_region", "year", "nutrient"],
+                                      as_index=False)
+                          .agg({"total_tonnes": "sum",
+                                "review_flags": lambda s: "derived_from_products:" + ",".join(sorted(set(
+                                    ",".join(s).replace("derived_from_product_", "").split(","))))}))
+                rollup["source"] = "india_dof_state_consumption"
+                rollup["source_record_id"] = (rollup["source"] + "|IND|" + rollup["state_or_region"]
+                                              + "|" + rollup["nutrient"] + "|" + rollup["year"].astype(str))
+                rollup["kg_per_ha_arable"] = None
+                rollup["arable_land_ha"] = None
+                rollup["source_url"] = src_url
+                rollup["retrieved_at"] = retrieved_at
+                rollup = rollup[USE_COLS]
+                use = pd.concat([use, rollup], ignore_index=True)
+                log.info("india_dof_state_consumption rows: %d (from %d product-nutrient pairs)",
+                         len(rollup), len(consumption_rows))
+            else:
+                log.info("india_dof_state_consumption rows: 0")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("india_dof_state_consumption parse failed: %s", exc)
+
+    # ── India DOF district N/P/K (data.gov.in resource 93051de3...) ─────────
+    # 30 districts × {Nitrogen, Phosphorus, Potash, Total} tonnes for 2019-20.
+    # Direct N/P/K — no stoichiometric derivation needed. Note: column header is
+    # "Phosphorus" but India reporting convention treats this column as P2O5.
+    if results.get("india_dof_district_npk") == "ok":
+        src_url = "https://api.data.gov.in/resource/93051de3-ccea-45b1-8026-5836ae176b10"
+        csv_path = staging / "india_dof" / "district_npk.csv"
+        try:
+            df = pd.read_csv(csv_path)
+
+            def norm_col2(c: str) -> str:
+                return re.sub(r"[^a-z0-9]+", "_", c.lower()).strip("_")
+
+            df.columns = [norm_col2(c) for c in df.columns]
+            dist_col = next((c for c in df.columns if "distric" in c), None)
+            n_col = next((c for c in df.columns if "nitrogen" in c), None)
+            p_col = next((c for c in df.columns if "phosphor" in c), None)
+            k_col = next((c for c in df.columns if "potash" in c), None)
+            district_rows: list[dict] = []
+            if dist_col:
+                for _, row in df.iterrows():
+                    dist = str(row.get(dist_col, "")).strip()
+                    if not dist or dist.lower() in ("nan", "total"):
+                        continue
+                    for col, nutrient in ((n_col, "N"), (p_col, "P2O5"), (k_col, "K2O")):
+                        if not col:
+                            continue
+                        try:
+                            v = float(row.get(col))
+                        except (TypeError, ValueError):
+                            continue
+                        if pd.isna(v) or v == 0:
+                            continue
+                        district_rows.append({
+                            "source": "india_dof_district_npk",
+                            "source_record_id": f"india_dof_district_npk|IND|{dist}|{nutrient}|2019",
+                            "country_iso3": "IND", "country_name": "India",
+                            "state_or_region": dist,
+                            "year": 2019, "nutrient": nutrient,
+                            "total_tonnes": v,
+                            "kg_per_ha_arable": None, "arable_land_ha": None,
+                            "source_url": src_url, "retrieved_at": retrieved_at,
+                            "review_flags": "district_level;year_2019_20_only",
+                        })
+            if district_rows:
+                use = pd.concat([use, pd.DataFrame(district_rows, columns=USE_COLS)], ignore_index=True)
+            log.info("india_dof_district_npk rows: %d", len(district_rows))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("india_dof_district_npk parse failed: %s", exc)
 
     return prices, use
 
@@ -927,6 +1143,8 @@ def main() -> int:
         "wb_pinksheet": None, "africafertilizer": None,
         "faostat": None, "faostat_product": None,
         "owid": None, "wb_wdi": None, "india_dof": None,
+        "india_dof_state_consumption": None,
+        "india_dof_district_npk": None,
     }
 
     def _try(name: str, fn: Callable[[], None]) -> None:
@@ -949,12 +1167,16 @@ def main() -> int:
     _try("owid",             lambda: get_owid(staging / "owid.csv"))
     _try("wb_wdi",           lambda: get_wb_wdi(staging / "wb_wdi.json"))
     _try("india_dof",        lambda: get_datagovin_dof(india_dir))
+    _try("india_dof_state_consumption", lambda: get_datagovin_state_consumption(india_dir / "state_consumption.csv"))
+    _try("india_dof_district_npk",      lambda: get_datagovin_district_npk(india_dir / "district_npk.csv"))
 
     try:
         prices, use = normalize(staging, results, retrieved_at)
 
         price_results = {k: results.get(k) for k in ("wb_pinksheet", "africafertilizer", "india_dof")}
-        use_results = {k: results.get(k) for k in ("faostat", "faostat_product", "owid", "wb_wdi", "india_dof")}
+        use_results = {k: results.get(k) for k in (
+            "faostat", "faostat_product", "owid", "wb_wdi",
+            "india_dof", "india_dof_state_consumption", "india_dof_district_npk")}
         prices = preserve_failed_sources(prices, prices_parquet, price_results, PRICE_COLS)
         use = preserve_failed_sources(use, use_parquet, use_results, USE_COLS)
 

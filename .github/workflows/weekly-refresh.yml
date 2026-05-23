@@ -34,6 +34,9 @@ jobs:
       - name: Refresh live-API sources + rebuild parquet
         run: python scripts/refresh.py --out-dir data
 
+      - name: Smoke test refreshed artifacts
+        run: pytest tests/test_smoke.py -v
+
       - name: Commit if changed
         run: |
           git config user.name  "github-actions"

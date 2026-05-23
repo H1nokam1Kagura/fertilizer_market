@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS gates_open_data.open_data.fertilizer_use (
   source_record_id    STRING,
   country_iso3        STRING,
   country_name        STRING,
+  state_or_region     STRING  COMMENT 'Sub-national name (Indian state/UT, district). NULL for national rows.',
   year                INT,
   nutrient            STRING,
   total_tonnes        DOUBLE,
@@ -42,5 +43,5 @@ CREATE TABLE IF NOT EXISTS gates_open_data.open_data.fertilizer_use (
 PARTITIONED BY (year)
 TBLPROPERTIES (
   'delta.feature.allowColumnDefaults' = 'enabled',
-  'comment' = 'Annual fertilizer use by country and nutrient. Public Fairgrounds mirror of ggo_agdev.bioinputs.fertilizer_use.'
+  'comment' = 'Annual fertilizer use by country (and optionally sub-national region) and nutrient. Public Fairgrounds mirror of ggo_agdev.bioinputs.fertilizer_use.'
 );

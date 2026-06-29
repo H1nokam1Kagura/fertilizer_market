@@ -2,10 +2,18 @@
 (NBS) rate-change events. Emit canonical CSV/Parquet that conforms to the
 fertilizer_price schema.
 
-Python port of Refresh-IndiaNBS.ps1. PIB serves the rate table inline in older
-press releases (2021-2023); newer releases (Kharif 2022+, Rabi 2024+) reference
-a PDF annex instead. The script flags those with review_flags=
-'manual_extract_required' so a follow-up scraper can target the annex.
+Python port of Refresh-IndiaNBS.ps1. PIB embedded the per-nutrient rate table
+inline (column-major: an N/P/K/S header row followed by a values row) in older
+Cabinet press releases — Rabi 2021-22 through Rabi 2023-24 (last good release:
+PRID 1970773). From Kharif 2024 onward the PIB releases publish ONLY the season,
+effective dates and the total subsidy outlay (Rs crore); the per-nutrient rates
+are no longer in the release at all — there is no inline table and no PDF/annexure
+link (verified live 2026-06-28 against PRID 2010125, 2055988, 2116176, 2183292).
+The detailed rates now live in a separate Department of Fertilizers office
+memorandum / Gazette notification. The script flags any release with no parseable
+rate table as review_flags='manual_extract_required'; recovering post-2023 rates
+requires a NEW fetcher against fert.nic.in / the Gazette — a parser change cannot
+recover data that is not present in the PIB HTML.
 
 Pipeline:
     READ SEED → FETCH HTML (cache) → PARSE column-major table → EMIT CANONICAL

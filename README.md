@@ -10,8 +10,8 @@ Two artifacts in `data/`, both committed:
 
 | File | Grain | Sources | Typical size |
 |---|---|---|---|
-| `prices.parquet` / `.csv` | Monthly, by product × country × market_level | WB Pink Sheet, AfricaFertilizer | ~10k rows |
-| `use.parquet` / `.csv`    | Annual, by country × nutrient (N / P2O5 / K2O / total) | FAOSTAT, OurWorldInData, WB WDI | ~60k rows |
+| `prices.parquet` | Monthly, by product × country × market_level | WB Pink Sheet, AfricaFertilizer | ~10k rows |
+| `use.parquet`    | Annual, by country × nutrient (N / P2O5 / K2O / total) | FAOSTAT, OurWorldInData, WB WDI | ~60k rows |
 
 The two parquets are the single source of truth — every consumer (Databricks Delta tables,
 MCP queries, ad-hoc analysis) reads from these.
@@ -189,10 +189,8 @@ fertilizer_market/
 ├─ README.md
 ├─ data/
 │  ├─ dim_country.csv
-│  ├─ prices.parquet            (built by refresh)
-│  ├─ prices.csv
+│  ├─ prices.parquet            (built by refresh; canonical — loader reads parquet only)
 │  ├─ use.parquet
-│  ├─ use.csv
 │  └─ refresh_log.csv           (append-only audit trail)
 ├─ scripts/
 │  └─ Refresh-FertilizerMarket.ps1

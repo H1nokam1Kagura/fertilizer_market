@@ -42,7 +42,9 @@ jobs:
           git config user.name  "github-actions"
           git config user.email "actions@github.com"
           # refresh_log.csv is gitignored; explicit list keeps the commit scope deliberate.
-          git add data/prices.parquet data/prices.csv data/use.parquet data/use.csv
+          # Parquet is canonical (the Databricks loader reads parquet only); CSV sidecars
+          # were dropped 2026-06-29 — do not re-add them here.
+          git add data/prices.parquet data/use.parquet
           if git diff --cached --quiet; then
             echo "No changes to publish"
             exit 0

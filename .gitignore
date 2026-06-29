@@ -6,3 +6,6 @@ __pycache__/
 *.tmp
 data/refresh_log.csv
 data/india_pib_nbs/
+# Canonical price/use outputs are parquet only; CSV sidecars dropped 2026-06-29.
+data/prices.csv
+data/use.csv

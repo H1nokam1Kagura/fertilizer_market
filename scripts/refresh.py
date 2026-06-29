@@ -1245,10 +1245,11 @@ def main() -> int:
         for c in ("total_tonnes", "kg_per_ha_arable", "arable_land_ha"):
             use[c] = pd.to_numeric(use[c], errors="coerce")
 
+        # Parquet is the canonical output (the Databricks loader reads parquet only).
+        # CSV sidecars were dropped 2026-06-29 — they were ~18.5 MB of git-diffable
+        # redundancy the pipeline never consumed.
         prices[PRICE_COLS].to_parquet(prices_parquet, compression="snappy", index=False)
-        prices[PRICE_COLS].to_csv(prices_parquet.with_suffix(".csv"), index=False, encoding="utf-8")
         use[USE_COLS].to_parquet(use_parquet, compression="snappy", index=False)
-        use[USE_COLS].to_csv(use_parquet.with_suffix(".csv"), index=False, encoding="utf-8")
 
         wallclock = int((datetime.now(timezone.utc) - started).total_seconds())
         log.info("[DONE] wallclock=%ds prices=%d use=%d log=%s",

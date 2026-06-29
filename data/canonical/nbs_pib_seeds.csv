@@ -18,6 +18,16 @@ prid,announced_date,season,fiscal_year,notes
 #   fiscal_year    — e.g. 2024-25 (Indian fiscal year of effect)
 #   notes          — free text (e.g. "DAP special package included")
 #
+# SOURCE EXHAUSTED past Rabi 2023-24 (verified live 2026-06-28):
+#   PIB Cabinet NBS releases embedded the per-nutrient N/P/K/S rate table only
+#   through Rabi 2023-24 (last parseable: PRID 1970773). From Kharif 2024 onward
+#   (PRID 2010125, 2055988, 2116176, 2183292) the releases carry just the season,
+#   dates and total outlay (Rs crore) — no rate table, no PDF/annexure link, so
+#   refresh_nbs.py emits an UNRESOLVED / manual_extract_required row for each.
+#   The detailed rates moved to Dept. of Fertilizers office memoranda / the Gazette
+#   (fert.nic.in). Those PRIDs are kept below for provenance, not because PIB yields
+#   rates for them. To extend coverage, add a DoF/Gazette fetcher — not more PRIDs.
+#
 # Verified PRIDs (2021-2025, sourced from PIB search 2026-05-22):
 1763349,2021-10-12,rabi,2021-22,Rabi 2021-22 (01.10.2021-31.03.2022)
 1820522,2022-04-27,kharif,2022-23,Kharif 2022 (01.04.2022-30.09.2022); SSP freight subsidy + DAP special support
